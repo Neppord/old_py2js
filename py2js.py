@@ -338,6 +338,11 @@ class JS(object):
         js.append("%s.prototype.__class__ = %s;" % (class_name, class_name))
         js.append("%s.prototype.toString = _iter.prototype.toString;" % \
                 (class_name))
+        # if the class has no __init__ copys the default
+        # can be overloaded later
+        if not bases:
+          js.append("%s.__init__ = function (){}" % (class_name))
+          js.append("%s.prototype.__init__ = function (){}" % (class_name))
         from ast import dump
         #~ methods = []
         self._class_name = class_name
