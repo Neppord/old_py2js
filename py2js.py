@@ -323,7 +323,6 @@ class JS(object):
     def visit_ClassDef(self, node):
         js = []
         bases = [self.visit(n) for n in node.bases]
-        assert len(bases) >= 1
         class_name = node.name
         #self._classes remembers all classes defined
         self._classes[class_name] = node
@@ -362,7 +361,8 @@ class JS(object):
             #~ js.append("_%s.prototype.__init__ = function() {" % class_name)
             #~ js.append("}")
 
-        js.append('extend(%s,[%s]);'%(class_name,
+        if bases:
+          js.append('extend(%s,[%s]);'%(class_name,
             ', '.join(['%s'%cls for cls in bases])))
 
         return js
