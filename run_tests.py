@@ -81,7 +81,6 @@ def main():
         known_to_fail = [
                 "tests/basic/nestedclass.py",
                 "tests/basic/super.py",
-                "tests/basic/class5.py",
                 "tests/basic/kwargs.py",
                 "tests/basic/float2int.py",
                 "tests/basic/oo_inherit.py",
@@ -93,7 +92,6 @@ def main():
                 "tests/basic/valueerror.py",
                 "tests/basic/lambda.py",
                 "tests/basic/try.py",
-                "tests/basic/assign_slice.py",
                 "tests/basic/vargs.py",
                 "tests/basic/del_attr.py",
                 "tests/basic/del_global.py",
