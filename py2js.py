@@ -379,7 +379,16 @@ class JS(object):
             return ["return;"]
 
     def visit_Delete(self, node):
-        return node
+        js =[]
+        for target in node.targets:
+          if isinstance(target, ast.Name):
+            js.append("delete %s;" % self.visit(target))
+          elif isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Index):
+            js.append("%s.__delitem__(%s)" % (self.visit(target.value), self.visit(target.slice)))
+          elif isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Slice):
+            js.append("%s.__delslice__(%s,%s)" % (self.visit(target.value), 
+              self.visit(target.slice.lower), self.visit(target.slice.upper)))
+        return js
 
     @scope
     def visit_Assign(self, node):
