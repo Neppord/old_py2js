@@ -88,6 +88,7 @@ module Python version "$Revision: 62047 $"
 import ast
 import inspect
 from optparse import OptionParser
+from compilerlib import Visitor
 
 def scope(func):
     func.scope = True
@@ -96,7 +97,7 @@ def scope(func):
 class JSError(Exception):
     pass
 
-class JS(object):
+class JS(Visitor):
 
     name_map = {
         'self'   : 'this',
@@ -201,17 +202,6 @@ class JS(object):
 
     def get_comparison_op(self, node):
         return self.comparison_op[node.__class__.__name__]
-
-    def visit(self, node, scope=None):
-        try:
-            visitor = getattr(self, 'visit_' + self.name(node))
-        except AttributeError:
-            raise JSError("syntax not supported (%s)" % node)
-
-        if hasattr(visitor, 'statement'):
-            return visitor(node, scope)
-        else:
-            return visitor(node)
 
     def indent(self, stmts):
         return [ "    " + stmt for stmt in stmts ]
@@ -343,7 +333,6 @@ class JS(object):
         if not bases:
           js.append("%s.__init__ = function (){}" % (class_name))
           js.append("%s.prototype.__init__ = function (){}" % (class_name))
-        from ast import dump
         #~ methods = []
         self._class_name = class_name
         for stmt in node.body:
