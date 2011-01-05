@@ -1,0 +1,20 @@
+class List(object):
+    def __init__(self,seq=None):
+        self.__list = []
+        self.extend(seq)
+    def extend(self, seq):
+        for item in iter(seq):
+          self.append(item)
+    def append(self, item):
+        self.__list = self.__list + [item]
+
+def hasattr(thing, attr):
+    if attr in thing.__dict__:
+        return True
+    else:
+        return False
+
+def help(thing):
+    if hasattr(thing, "__doc__"):
+        print thing.__doc__
+
