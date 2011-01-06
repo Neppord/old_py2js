@@ -1,4 +1,4 @@
-class List(object):
+class list(object):
     def __init__(self,seq=None):
         self.__list = []
         self.extend(seq)
@@ -7,9 +7,28 @@ class List(object):
           self.append(item)
     def append(self, item):
         self.__list = self.__list + [item]
+    def __str__(self):
+        s ="["
+        for item in self.__list:
+          s += item + ", "
+        s = s[:-2] +"]"
+        return s
+
+def iter(seq):
+   class iterator():
+     def __init__(self, seq):
+       self.seq = seq
+       self.index = 0
+
+     def next(self):
+        self.index += 1
+        if len(self.seq)>self.index:
+            print "Error"
+        else:
+            return self.seq[self.index]
 
 def hasattr(thing, attr):
-    if attr in thing.__dict__:
+    if thing.__dict__ and attr in thing.__dict__:
         return True
     else:
         return False
@@ -20,3 +39,9 @@ def help(thing):
 
 def float(number=0.):
   return number * 1.
+
+def str(obj):
+  if hasattr(obj , "__str__"):
+    return obj.__str__()
+  else:
+    return obj.toString()

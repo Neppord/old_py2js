@@ -50,7 +50,7 @@ class LocalIdFinder(Visitor):
     return [fun_def.name]
 
   def visit_Assign(self, assign):
-    return self.all(*assign.targets)
+    return self.all(assign.targets)
 
   def visit_Expr(self, expr):
     return self(expr.value)
@@ -83,7 +83,9 @@ class LocalIdFinder(Visitor):
     return [alias.asname or alias.name]
 
 
-def encapsulate(visible="", *body):
+def encapsulate(visible=[], *body):
   if visible:
-    visible = "var %s;\n" % ",\n  ".join(visible)
-  return "%s(function (){%s})()" % (visible, "\n".join(body))
+    visible = ["var %s;\n" % ",\n  ".join(visible)]
+  else:
+    visible = []
+  return "\n".join(visible + ["(function (){"] + list(body) + ["})()"])

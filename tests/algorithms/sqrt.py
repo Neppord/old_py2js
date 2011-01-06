@@ -17,7 +17,10 @@ def sqrt(x):
 
 def p(x):
     prec = 11
-    l = list(iter(str(x)))[:prec]
+    s = str(x)
+    it = iter(s)
+    l = list(it)
+    l = l[:prec]
     if not "." in l:
         l.append(".")
         l.append("0")

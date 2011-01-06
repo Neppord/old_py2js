@@ -58,7 +58,7 @@ class PyJsCompiler(Visitor):
     arg_with_out_def = arguments[:-len(defaults)]
     arg_with_def = arguments[len(defaults):]
     arg_len = len(arg_with_out_def)
-    assign = "%s = (arguments.callee.vararg.pop() || \
+    assign = "%s = (arguments[%d] || \
 arguments.callee.kwargs[\"%s\"] || \
 arguments.callee.defaults.pop())"
     vararg = "%s = arguments.callee.vararg;\n"%vararg[0] if vararg else ""
@@ -67,7 +67,7 @@ arguments.callee.defaults.pop())"
         names,       
         "/*function Prologue */",
         "%s = function (){" % name,
-        "var %s;" % ",\n  ".join(assign % (name, name) for name in arguments), 
+        "var %s;" % ",\n  ".join(assign % (name, i, name) for i, name in enumerate(arguments)), 
         vararg + kwarg + "/*End of function Prologue*/",
         "\n".join(self.visit(stmt) for stmt in fun_def.body),
         "}",
@@ -91,25 +91,22 @@ arguments.callee.defaults.pop())"
           "/*Class %s*/" % name,
           "var %s;" % ", ".join(locals),
           "%s = function (){" % name,
-          "  if(this === window){",
+          "  if(!(this instanceof %s)){" % name,
           "    t = new %s();" % name,
           "    t.__class__ = %s;" % name,
           "    if (t.__init__){",
-          "      t.__init__.vararg = arguments.callee.vararg;",
           "      t.__init__.kwarg = arguments.callee.kwarg;",
           "      t.__init__.defaults = t.__init__.func_deafults.concat([]);",
-          "      t.__init__.call(t);",
+          "      t.__init__.apply(t,[t].concat(arguments));",
           "    }",
           "    return t;",
           "  }"
           "}",
           ]),
         body,
-        "\n".join([
-          "%s.__name__ = %s" % (name, name),
-          "%s.prototype = %s" % (name,bases[0]) if bases else "/*no inheritence*/" # FIXME: multiple inheritence
-          "\n".join("%s.%s = %s" % (name,attr,attr) for attr in locals),
-          ])
+        "%s.__name__ = %s" % (name, name),
+        "%s.prototype = %s" % (name,bases[0]) if bases else "/*no inheritence*/", # FIXME: multiple inheritence
+        "\n".join("%s.%s = %s" % (name,attr,attr) for attr in locals)
         )
     return "\n".join(js)
 
@@ -133,7 +130,16 @@ arguments.callee.defaults.pop())"
       lower = self(slice.lower) if slice.lower else "null"
       upper = self(slice.upper) if slice.upper else "null"
       step = self(slice.step) if slice.step else "null"
-      return "(%s).slice(%s,%s,%s)"%(value, lower, upper, step)
+      return encapsulate("",
+          "$ = %s;"% value,
+          "if($.slice){",
+          "  return $.slice(%s,%s,%s);" % (lower, upper, step),
+          "}else if($.__getslice__){",
+          "  $.__getslice__.vararg = [$, %s, %s, %s];" %(lower, upper, step),
+          "  return $.__getslice__();",
+          "  delete $.__getslice__,vararg;",
+          "}"
+          )
     raise PyJsCompilerError.now("Full slice support", sub, sub)
 
 
@@ -149,8 +155,7 @@ arguments.callee.defaults.pop())"
     return js
 
   def visit_Call(self, call_expr):
-    names = self.local_id_finder.visit(call_expr.func)
-    name = names[0]
+    name = self(call_expr.func)
     kwargs = dict(self.visit(keyword) for keyword in call_expr.keywords)
     if call_expr.kwargs:
       kwargs.update(dict((self.visit(key),self.visit(value)) for key,value in zip(call_expr.kwargs.keys, call_expr.kwargs.values)))
@@ -161,17 +166,21 @@ arguments.callee.defaults.pop())"
     return encapsulate(
         "", # only return the result
         "%s.kwarg = {%s};" % (name, ", ".join("\"%s\": %s" for key,value in kwargs.items())),
-        "%s.vararg = [%s];" % (name, ", ".join(args)),
+        "if(typeof %s.func_defaults == \"Array\"){" % (name),
         "%s.defaults = %s.func_defaults.concat([]);" % (name, name),
+        "}/*IM HERE*/",
         "var ret;",
-        "ret = %s();" % name,
+        "ret = %s(%s);" % (name, ", ".join(args)),
         "delete %s.kwargs;" % name,
-        "delete %s.vararg;" % name,
         "delete %s.defaults;" % name,
         "return ret;"
         )
 
   def visit_Name(self, name):
+    if name.id == "False":
+      return "false"
+    elif name.id == "True":
+      return "true"
     return name.id
 
   def visit_Pass(self, node):
@@ -241,13 +250,27 @@ arguments.callee.defaults.pop())"
     return "\n".join(js)
 
   def visit_Compare(self, comp_expr):
+    def  fix(i, op):
+      if op == "in":
+        return encapsulate("",
+            "if(typeof $%d ==\"undefined\"){" % (i+1),
+            "  return false;",
+            "}else if(typeof $%d.__contains__ != \"undefined\"){" % (i+1),
+            "  return $%d.__contains__($%d);" % (i+1, i),
+            "}else if((typeof $%d.contains) != \"undefined\"){" % (i+1),
+            "  return $%d.contains($%d);" % (i+1, i),
+            "}else{",
+            "  return $%d in $%d;" %  (i, i+1),
+            "}",
+            )
+      return "$%d %s $%d" % (i, op, i+1)
     exprs = [self.visit(comp) for comp in [comp_expr.left] + comp_expr.comparators]
     ops = [self.visit(op) for op in comp_expr.ops]
     return encapsulate(
         "",
         "var %s;" % ", ".join("$%d = %s" % t for t in enumerate(exprs)),
         "return (" + " && ".join(
-          "$%d %s $%d" % (i, op, i+1) if op!="IN" else "$%d.contains($%d)"%(i+1,i) for i,op in enumerate(ops) ) + ");"
+          fix(i, op) for i,op in enumerate(ops) ) + ");"
         )
   def visit_Eq(self, eq):
     return "=="
@@ -286,13 +309,24 @@ arguments.callee.defaults.pop())"
     return "%s(%s)"%(self(unary_expr.op), self(unary_expr.operand) )
 
   def visit_In(self, _in):
-    return "IN"
+    return "in"
 
   def visit_NotIn(self, not_in):
     return "NOTIN"
 
   def visit_USub(self, u_sub):
     return "-"
+
+  def visit_BoolOp(self, bool_op):
+    values = [self(value) for value in bool_op.values]
+    op = self(bool_op.op)
+    return (" %s " % op).join(values)
+
+  def visit_Or(self, _or):
+    return "||"
+
+  def visit_And(self, _and):
+    return "&&"
 
   def visit_Return(self, _return):
     return "return %s;" % (self(_return.value) if _return.value else "") 
@@ -303,10 +337,18 @@ arguments.callee.defaults.pop())"
         "",
         "/*Printing*/",
         "\n".join([
+          "var $ = %s" % to_be_printed,
+          "if(typeof $ != \"undefined\"){",
+          "  if( typeof $.__str__ != \"undefined\"){",
+          "    $ = $.__str__();",
+          "  }else if(typeof $.toString != \"undefined\"){",
+          "    $ = $.toString();"
+          "  }",
+          "}"
           "if(typeof console != \"undefined\" && typeof console.log != \"undefined\"){",
-          "console.log(%s)" % to_be_printed,
+          "  console.log($)",
           "}else{",
-          "print(%s)" % to_be_printed,
+          "  print($)",
           "}"
           ]),
         "/*end Of Printing*/"
