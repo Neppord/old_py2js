@@ -18,8 +18,6 @@ from compilerlib import LocalIdFinder, encapsulate
 
 class PyJsCompilerError(Exception):
   
-  local_id_finder = LocalIdFinder()
-
   @classmethod
   def never(cls, feature, node):
     return cls("[%d, %d] %s are not supportde by PyJsCompiler." % (
@@ -31,19 +29,22 @@ class PyJsCompilerError(Exception):
 
 class PyJsCompiler(Visitor):
 
+  local_id_finder = LocalIdFinder()
+
   def __init__(self, module_name):
     self.module_name = module_name
 
   def visit_Module(self, module):
     """Visits Module Defenitiion"""
-    names = self.local_id_finder.visit(module)
+    names = [self.module_name] ## ahrrrg cant get name from module ast node!!!
     name = names[0]
-    templaet = "%s.%%s = %%s" % name
+    template = "%s.%%s = %%s" % name
+    exports = self.local_id_finder.all(module.body) 
     return encapsulate(
         names,
         "/*module %s*/\n %s = {}" % (name, name),
-        "\n".join(self.visit(stmt) for stmt in moduel.body),
-        "\n".join(template % name for name in self.local_id_finder.all(module.body))
+        "\n".join(self.visit(stmt) for stmt in module.body),
+        "\n".join(template % (name, name) for name in exports if name != "*") 
         )
 
   def visit_FunctionDef(self, fun_def):
@@ -51,38 +52,28 @@ class PyJsCompiler(Visitor):
     names = self.local_id_finder(fun_def)
     name = names[0]
     arguments = self.local_id_finder.all(fun_def.args.args)
-    defaults = self.visit(fun_def.args.defaults)
-    kwarg = self.local_id_finder.visit(fun_def.args.kwarg)
-    vararg = self.local_id_finder.visit(fun_def.args.vararg)
+    defaults = [self.visit(default) for default in fun_def.args.defaults]
+    kwarg = self.local_id_finder.visit(fun_def.args.kwarg) if fun_def.args.kwarg else []
+    vararg = self.local_id_finder.visit(fun_def.args.vararg) if fun_def.args.vararg else []
     arg_with_out_def = arguments[:-len(defaults)]
     arg_with_def = arguments[len(defaults):]
     arg_len = len(arg_with_out_def)
-    arg_temp = "%s = arguments.callee.vararg.pop()"
-    key_temp = "%s = arguments.callee.kwargs[%s]"
-    del_temp = "deleat arguments.callee.kwargs[%s];"
+    assign = "%s = (arguments.callee.vararg.pop() || \
+arguments.callee.kwargs[\"%s\"] || \
+arguments.callee.defaults.pop())"
+    vararg = "%s = arguments.callee.vararg;\n"%vararg[0] if vararg else ""
+    kwarg = "%s = arguments.callee.kwarg;\n" %kwarg[0] if kwarg else ""
     return encapsulate(
-        names,
-        "\n".join([
-          "/*function Prologue */",
-          "%s = function (){" % name,
-          "var %s;" % ", ".join([
-            ", ".join(arg_temp % name for name in arg_with_out_def),
-            ", ".join(key_temp % (name,name) for name in arg_with_def),
-            "\n".join(del_temp % name for name in arg_with_def)
-            "%s = arguments.callee.vararg;"%vararg, 
-            "%s = arguments.callee.kwarg;" %kwarg, 
-            "delete arguments.callee.vararg", #dubble check
-            "delete arguments.callee.kwarg", #dubble check
-            "/*End of function Prologue*/
-            ])
-          ]),
-        "\n".join(self.visit(stmt) for stmt in body),
-        "\n".join([
-          "}",
-          "%s.__name__ = %s;" %(name ,name),
-          "%s.func_defaults = [%s];" % (name, defaults)
-          ])
-        )
+        names,       
+        "/*function Prologue */",
+        "%s = function (){" % name,
+        "var %s;" % ",\n  ".join(assign % (name, name) for name in arguments), 
+        vararg + kwarg + "/*End of function Prologue*/",
+        "\n".join(self.visit(stmt) for stmt in fun_def.body),
+        "}",
+        "%s.__name__ = \"%s\";" %(name ,name),
+        "%s.func_defaults = [%s];" % (name, ", ".join(d if d !="None" else "undefined" for d in defaults))
+        ) +";"
 
   def visit_ClassDef(self, class_def):
     """Visits Class Defenition"""
@@ -91,7 +82,7 @@ class PyJsCompiler(Visitor):
     names = self.local_id_finder.visit(class_def)
     name = names[0]
     bases = self.local_id_finder.all(class_def.bases)
-    bases.remove("object")
+    if "object" in bases: bases.remove("object")
     locals = self.local_id_finder.all(class_def.body)
     body = "\n".join(self.visit(stmt) for stmt in class_def.body)
     return encapsulate(
@@ -104,9 +95,12 @@ class PyJsCompiler(Visitor):
           "    t = new %s();" % name,
           "    t.__class__ = %s;" % name,
           "    if (t.__init__){",
-          "      t.__init__.applye(t, arguments);",
-          "    }"
-          "    return t;")
+          "      t.__init__.vararg = arguments.callee.vararg;",
+          "      t.__init__.kwarg = arguments.callee.kwarg;",
+          "      t.__init__.defaults = t.__init__.func_deafults.concat([]);",
+          "      t.__init__.call(t);",
+          "    }",
+          "    return t;",
           "  }"
           "}",
           ]),
@@ -114,7 +108,7 @@ class PyJsCompiler(Visitor):
         "\n".join([
           "%s.__name__ = %s" % (name, name),
           "%s.prototype = %s" % (name,bases[0]) if bases else "/*no inheritence*/" # FIXME: multiple inheritence
-          "\n".join("%s.%s = %s" % (name,atrr,attr) for attr in locals),
+          "\n".join("%s.%s = %s" % (name,attr,attr) for attr in locals),
           ])
         )
     return "\n".join(js)
@@ -127,6 +121,21 @@ class PyJsCompiler(Visitor):
     return js
 
   visit_Tuple = visit_List
+
+  def visit_Subscript(self, sub):
+    value = self(sub.value)
+    slice = sub.slice
+    name = slice.__class__.__name__
+    if name=="Index":
+      index = self(slice.value)
+      return "(%s)[%s]"% (value, index)
+    elif name == "Slice":
+      lower = self(slice.lower) if slice.lower else "null"
+      upper = self(slice.upper) if slice.upper else "null"
+      step = self(slice.step) if slice.step else "null"
+      return "(%s).slice(%s,%s,%s)"%(value, lower, upper, step)
+    raise PyJsCompilerError.now("Full slice support", sub, sub)
+
 
   def visit_Num(self, num):
     return repr(num.n)
@@ -143,31 +152,62 @@ class PyJsCompiler(Visitor):
     names = self.local_id_finder.visit(call_expr.func)
     name = names[0]
     kwargs = dict(self.visit(keyword) for keyword in call_expr.keywords)
-    kwargs.update(dict((self.visit(key),self.visit(value)) for key,value in zip(call_expr.kwargs.keys, call_expr.kwargs.values)))
+    if call_expr.kwargs:
+      kwargs.update(dict((self.visit(key),self.visit(value)) for key,value in zip(call_expr.kwargs.keys, call_expr.kwargs.values)))
     args = [self.visit(arg) for arg in call_expr.args]
-    args += [self.visit(arg) for arg in call_expr.starargs.elts]
+    if call_expr.starargs:
+      args += [self.visit(arg) for arg in call_expr.starargs.elts]
 
     return encapsulate(
         "", # only return the result
-        "%s.kwarg = %r;\n%s.vararg = %r;" %(name, kwargs, name args),
-        "var ret;ret = %s();" % (name)
-        "delete %s.kwargs;\ndelete %s.vararg;\nreturn ret;"
+        "%s.kwarg = {%s};" % (name, ", ".join("\"%s\": %s" for key,value in kwargs.items())),
+        "%s.vararg = [%s];" % (name, ", ".join(args)),
+        "%s.defaults = %s.func_defaults.concat([]);" % (name, name),
+        "var ret;",
+        "ret = %s();" % name,
+        "delete %s.kwargs;" % name,
+        "delete %s.vararg;" % name,
+        "delete %s.defaults;" % name,
+        "return ret;"
         )
 
   def visit_Name(self, name):
-    eturn name.id
+    return name.id
 
   def visit_Pass(self, node):
     return "/* pass */"
 
   def visit_Assign(self, node):
-    js = ["(function(){var tmp = %s;" %(self.visit(node.value))]
-    js += ["%s = tmp[%d]" % (target,i) for i, target in enumerate(node.targets) ]
-    js += ["})()"]
-    return "\n".join(js)
+    targets = [self(target) for target in node.targets]
+    value = self(node.value)
+    if len(node.targets)>1:
+      return encapsulate(
+           targets,
+           "var $= %s;" % value,
+          "\n".join("%s = $[%d];"(target,i) for i,target in enumerate(tsargets)),
+          )
+    else:
+      return "%s = %s;" % (targets[0], value)
+
+  
+    target = self(aug_assign.target)
+    op = self(aug_assign.op)
+    value = self(aug_assign.value)
+    return "%s %s= %s;" % (target, op, value)
+
+  def visit_AugAssign(self, aug_assign):
+    target = self(aug_assign.target)
+    op = self(aug_assign.op)
+    value = self(aug_assign.value)
+    return "%s %s= %s;" % (target, op, value)
 
   def visit_Attribute(self, node):
-    return ""
+    value = self(node.value)
+    attr = node.attr
+    return "%s.%s"%(value, attr)
+
+  def visit_Add(self, add):
+    return "+"
 
   def visit_For(self, for_stmt):
     var = self.visit(for_stmt.target)
@@ -180,6 +220,18 @@ class PyJsCompiler(Visitor):
     js += ["}"]
     return "\n".join(js)
 
+  def visit_While(self, while_stmt):
+    test = self(while_stmt.test)
+    body = "\n".join(self(stmt) for stmt in while_stmt.body)
+    if while_stmt.orelse:
+      raise PyJsCompiler("Else in context of While", while_stmt)
+      orelse = "\n".join(self(stmt) for stmt in while_stmt.orelse)
+    return encapsulate("",
+        "while(%s){" % test,
+        body,
+        "}",
+        )
+
   def visit_If(self, if_stmt):
     js =["if(%s){" % self.visit(if_stmt.test)]
     js += [self.visit(stmt) for stmt in if_stmt.body]
@@ -189,10 +241,105 @@ class PyJsCompiler(Visitor):
     return "\n".join(js)
 
   def visit_Compare(self, comp_expr):
-    lefts = [self.visit(comp) for comp in [comp_expr.left] + comp_expr.comparators]
-    rights = lefts[1:]
+    exprs = [self.visit(comp) for comp in [comp_expr.left] + comp_expr.comparators]
     ops = [self.visit(op) for op in comp_expr.ops]
-    return "(" + " && ".join("%s %s %s" % n for n in zip(left, ops, rights)) + ")"
+    return encapsulate(
+        "",
+        "var %s;" % ", ".join("$%d = %s" % t for t in enumerate(exprs)),
+        "return (" + " && ".join(
+          "$%d %s $%d" % (i, op, i+1) if op!="IN" else "$%d.contains($%d)"%(i+1,i) for i,op in enumerate(ops) ) + ");"
+        )
+  def visit_Eq(self, eq):
+    return "=="
+
+  def visit_NotEq(self, not_eq):
+    return "!="
+
+  def visit_Lt(self, lt):
+    return "<"
+
+  def visit_LtE(self, lte):
+    return "<="
+     
+  def visit_Gt(self, gt):
+    return ">"
+
+  def visit_Is(self, _is):
+    return "==="
+
+  def visit_Not(self, _not):
+    return "!"
+
+  def visit_IsNot(self, is_not):
+    return "!=="
 
   def visit_BinOp(self, binop_expr):
-    return self.visit(binop_expr.left) + binary_op[binop_expr.op.__class__] + self.visit(binop_expr.right)
+    left = self.visit(binop_expr.left)
+    right = self.visit(binop_expr.right)
+
+    if binop_expr.op.__class__.__name__== "Pow":
+      return "Math.pow(%s,%s)" % (left, right)
+    op = binary_op[binop_expr.op.__class__]
+    return "%s %s %s" % (left, op, right)
+
+  def visit_UnaryOp(self, unary_expr):
+    return "%s(%s)"%(self(unary_expr.op), self(unary_expr.operand) )
+
+  def visit_In(self, _in):
+    return "IN"
+
+  def visit_NotIn(self, not_in):
+    return "NOTIN"
+
+  def visit_USub(self, u_sub):
+    return "-"
+
+  def visit_Return(self, _return):
+    return "return %s;" % (self(_return.value) if _return.value else "") 
+
+  def visit_Print(self, _print):
+    to_be_printed = ", ".join(self(value) for value in _print.values)
+    return encapsulate(
+        "",
+        "/*Printing*/",
+        "\n".join([
+          "if(typeof console != \"undefined\" && typeof console.log != \"undefined\"){",
+          "console.log(%s)" % to_be_printed,
+          "}else{",
+          "print(%s)" % to_be_printed,
+          "}"
+          ]),
+        "/*end Of Printing*/"
+        )
+
+  def visit_ImportFrom(self, import_from):
+    from os.path import isfile
+    from ast import parse
+    name = import_from.module
+    if isfile(name+".js"):
+      return "\n".join(open(name+".js","r").readlines())
+    elif isfile(name+".pyjs"):
+      s = "\n".join(open(name+".pyjs","r").readlines())
+      ast = parse(s)
+      comp = PyJsCompiler(name)
+      code = comp(ast)
+      asnames = [alias.asname or alias.name for alias in import_from.names]
+      names = [alias.name for alias in import_from.names]
+      if asnames and asnames[0] == "*":
+        asnames = self.local_id_finder.all(ast.body)
+        names = asnames
+      imports = zip(asnames, names)
+      return encapsulate(
+          asnames,
+          code,
+          "\n".join("%s = %s.%s;" % (n, name, a) for n,a in imports)
+          )
+    raise PyJsCompilerError.now("import from", import_from)
+
+def convert_pyjs(s,name="__main__"):
+  from ast import parse
+  comp = PyJsCompiler(name)
+  t = parse(s)
+  return comp(t)
+
+

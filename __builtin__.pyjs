@@ -18,3 +18,5 @@ def help(thing):
     if hasattr(thing, "__doc__"):
         print thing.__doc__
 
+def float(number=0.):
+  return number * 1.

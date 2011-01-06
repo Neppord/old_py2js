@@ -14,6 +14,9 @@ JS_SRC_FILE_NAME = os.path.join(tempfile.gettempdir(), "js.src")
 JS_DIFF_FILE_NAME = os.path.join(tempfile.gettempdir(), "js.diff")
 PY2JS_ERR_FILE_NAME = os.path.join(tempfile.gettempdir(), "py2js.err")
 
+#COMPILER = "py2js.py"
+COMPILER = "pyjs.py"
+
 
 def test1(in_file):
     w = Writer()
@@ -35,7 +38,7 @@ def test3(name, in_file=None, known_to_fail=False):
     in_file = in_file or name 
 
     PYTHON_COMMAND = "python \"%s\" > \"%s\""
-    PY2JS_COMMAND = "python py2js.py --include-builtins \"%s\" > \"%s\" 2> \"%s\""
+    PY2JS_COMMAND = "python "+COMPILER+" --include-builtins \"%s\" > \"%s\" 2> \"%s\""
     JS_COMMAND = "js -f \"%s\" > \"%s\" 2> \"%s\""
     DIFF_COMMAND = "diff \"%s\" \"%s\" > \"%s\""
     w = Writer()

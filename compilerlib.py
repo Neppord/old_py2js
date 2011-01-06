@@ -23,17 +23,19 @@ class Visitor(object):
     try:
       visitor = getattr(self, 'visit_' + node.__class__.__name__)
     except AttributeError:
-      raise VisitorError("Visitor not found(%s)" % node)
+      raise VisitorError("(%s):Visitor not found(%s)" % (self.__class__.__name__,node.__class__.__name__))
 
     return visitor(node)
+
+  __call__ = visit
 
 class LocalIdFinder(Visitor):
   
   def doNothing(self):
     return []
 
-  def all(self, a*):
-    return reduce(lambda a,b:a+b:self.visit(a))
+  def all(self, a):
+    return reduce(lambda a,b:a+b,(self.visit(elem) for elem in a), [])
 
   def visit_Name(self, name):
     return [name.id]
@@ -50,8 +52,38 @@ class LocalIdFinder(Visitor):
   def visit_Assign(self, assign):
     return self.all(*assign.targets)
 
+  def visit_Expr(self, expr):
+    return self(expr.value)
 
-def encapsulate(visible="", prologue="", body="", epilogue=""):
+  def visit_List(self, l):
+    return []
+  
+  def visit_Dict(self, d):
+    return []
+
+  def visit_Tuple(self, t):
+    return []
+
+  def visit_Call(self, c):
+    return []
+
+  def visit_Pass(self, node):
+    return []
+
+  def visit_Attribute(self, attr):
+    return self(attr.value)
+
+  def visit_Print(self, _print):
+    return []
+
+  def visit_ImportFrom(self, import_from):
+    return self.all(import_from.names)
+
+  def visit_alias(self, alias):
+    return [alias.asname or alias.name]
+
+
+def encapsulate(visible="", *body):
   if visible:
-    visible = "var %s;\n" % ", ".join(visible)
-  return "%s(function (){\n%s\n%s\n%s\n})()" % (visible, prelude, body, epilogue)
+    visible = "var %s;\n" % ",\n  ".join(visible)
+  return "%s(function (){%s})()" % (visible, "\n".join(body))
