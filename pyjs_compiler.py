@@ -15,6 +15,7 @@ created.
 
 from compilerlib import Visitor, binary_op
 from compilerlib import LocalIdFinder, encapsulate
+from compilerlib import call_function
 
 class PyJsCompilerError(Exception):
   
@@ -42,7 +43,10 @@ class PyJsCompiler(Visitor):
     exports = self.local_id_finder.all(module.body) 
     return encapsulate(
         names,
-        "/*module %s*/\n %s = {}" % (name, name),
+        "/*module %s*/" % name,
+        "%s = {};" % name,
+        "%s,__name__ = \"%s\";" % (name, name),
+        "var __name__ = \"%s\";" % name,
         "\n".join(self.visit(stmt) for stmt in module.body),
         "\n".join(template % (name, name) for name in exports if name != "*") 
         )
@@ -162,19 +166,7 @@ arguments.callee.defaults.pop())"
     args = [self.visit(arg) for arg in call_expr.args]
     if call_expr.starargs:
       args += [self.visit(arg) for arg in call_expr.starargs.elts]
-
-    return encapsulate(
-        "", # only return the result
-        "%s.kwarg = {%s};" % (name, ", ".join("\"%s\": %s" for key,value in kwargs.items())),
-        "if(typeof %s.func_defaults == \"Array\"){" % (name),
-        "%s.defaults = %s.func_defaults.concat([]);" % (name, name),
-        "}/*IM HERE*/",
-        "var ret;",
-        "ret = %s(%s);" % (name, ", ".join(args)),
-        "delete %s.kwargs;" % name,
-        "delete %s.defaults;" % name,
-        "return ret;"
-        )
+    return call_function(name, args, kwargs) 
 
   def visit_Name(self, name):
     if name.id == "False":
@@ -346,13 +338,13 @@ arguments.callee.defaults.pop())"
           "  }",
           "}"
           "if(typeof console != \"undefined\" && typeof console.log != \"undefined\"){",
-          "  console.log($)",
+          "  console.log($);",
           "}else{",
-          "  print($)",
+          "  print($);",
           "}"
           ]),
         "/*end Of Printing*/"
-        )
+        ) + ";"
 
   def visit_ImportFrom(self, import_from):
     from os.path import isfile

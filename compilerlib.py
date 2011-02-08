@@ -18,14 +18,14 @@ class VisitorError(Exception):
 
 class Visitor(object):
 
-  def visit(self, node):
+  def visit(self, node, *a):
     """Finds and calls the appropiate function visit_<NodeName>"""
     try:
       visitor = getattr(self, 'visit_' + node.__class__.__name__)
     except AttributeError:
       raise VisitorError("(%s):Visitor not found(%s)" % (self.__class__.__name__,node.__class__.__name__))
 
-    return visitor(node)
+    return visitor(node, *a)
 
   __call__ = visit
 
@@ -89,3 +89,14 @@ def encapsulate(visible=[], *body):
   else:
     visible = []
   return "\n".join(visible + ["(function (){"] + list(body) + ["})()"])
+
+def call_function(func_name, args, kwargs):
+  return "\n".join([
+    "(function(){",
+    "%s.kwarg = {%s};" %(func_name, ", ".join("\"%s\": %s" % (key, value) for key,value in kwargs.items())),
+    "%s.dafaults = %s.func_defaults.concat([]);" % (func_name, func_name),
+    "var $ = %s(%s);" % (func_name, ", ".join(args)),
+    "delete %s.kwarg;" % func_name,
+    "delete %s.defaults;" % func_name,
+    "return $})()"
+    ])
