@@ -1,4 +1,4 @@
-eval("""Array.prototype ={};
+eval("""Array.prototype = Array.prototype || {};
 
 Array.prototype.__init__ = Array;
 
